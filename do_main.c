@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <sqlite3.h>
 
 /* constants */
@@ -51,6 +52,7 @@ void do_reset_state(void);
 void do_add_todo_for_test(const char *owner_name, const char *title, int completed);
 int do_todo_exists_for_user(const char *owner_name, const char *title, int completed);
 int do_get_todo_count_for_user(const char *owner_name);
+int do_string_contains_case_insensitive(const char *haystack, const char *needle);
 
 /* utility: trim newline from fgets */
 void do_trim_newline(char *s) {
@@ -121,6 +123,36 @@ int do_get_todo_count_for_user(const char *owner_name) {
         }
     }
     return count;
+}
+
+int do_string_contains_case_insensitive(const char *haystack, const char *needle) {
+    if (haystack == NULL || needle == NULL) {
+        return 0;
+    }
+
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) {
+        return 0;
+    }
+
+    for (const char *h = haystack; *h != '\0'; h++) {
+        size_t i;
+        for (i = 0; i < needle_len; i++) {
+            char hc = h[i];
+            char nc = needle[i];
+            if (hc == '\0') {
+                return 0;
+            }
+            if (tolower((unsigned char)hc) != tolower((unsigned char)nc)) {
+                break;
+            }
+        }
+        if (i == needle_len) {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 int do_load_data(void) {
@@ -339,7 +371,7 @@ void do_show_menu(void) {
     printf(DO_COLOR_YELLOW "2" DO_COLOR_RESET ". Create todo\n");
     printf(DO_COLOR_YELLOW "3" DO_COLOR_RESET ". Update todo\n");
     printf(DO_COLOR_YELLOW "4" DO_COLOR_RESET ". Toggle complete\n");
-    printf(DO_COLOR_YELLOW "5" DO_COLOR_RESET ". Delete todo\n");
+    printf(DO_COLOR_YELLOW "5" DO_COLOR_RESET ". Delete todo (by ID or text)\n");
     printf(DO_COLOR_YELLOW "6" DO_COLOR_RESET ". Clear completed\n");
     printf(DO_COLOR_YELLOW "0" DO_COLOR_RESET ". Exit\n");
     printf(DO_COLOR_BOLD "Enter choice: " DO_COLOR_RESET);
@@ -500,46 +532,95 @@ void do_toggle_complete(void) {
 }
 
 void do_delete_todo(void) {
-    int id;
     char buffer[32];
 
-    printf("Enter ID of todo to delete: ");
+    printf(DO_COLOR_BOLD "Enter ID or text of todo to delete: " DO_COLOR_RESET);
     if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
         printf(DO_COLOR_RED "Error reading input.\n" DO_COLOR_RESET);
         return;
     }
 
-    id = atoi(buffer);
-    if (id <= 0) {
-        printf(DO_COLOR_RED "Invalid ID.\n" DO_COLOR_RESET);
+    do_trim_newline(buffer);
+    if (buffer[0] == '\0') {
+        printf(DO_COLOR_RED "Input cannot be empty.\n" DO_COLOR_RESET);
         return;
     }
 
-    int index = do_find_todo_index_by_id(id, do_current_user);
-    if (index < 0) {
-        printf(DO_COLOR_RED "Todo with ID %d not found for user %s.\n" DO_COLOR_RESET, id, do_current_user);
-        return;
+    size_t len = strlen(buffer);
+    int is_numeric = 1;
+    for (size_t i = 0; i < len; i++) {
+        if (!isdigit((unsigned char)buffer[i])) {
+            is_numeric = 0;
+            break;
+        }
     }
 
-    printf(DO_COLOR_RED "Are you sure you want to delete todo with ID %d? (y/N): " DO_COLOR_RESET, id);
-    if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
-        printf(DO_COLOR_RED "Error reading input.\n" DO_COLOR_RESET);
-        return;
-    }
-    if (!(buffer[0] == 'y' || buffer[0] == 'Y')) {
-        printf(DO_COLOR_YELLOW "Delete cancelled.\n" DO_COLOR_RESET);
-        return;
-    }
+    if (is_numeric) {
+        int id = atoi(buffer);
+        if (id <= 0) {
+            printf(DO_COLOR_RED "Invalid ID.\n" DO_COLOR_RESET);
+            return;
+        }
 
-    for (int i = index; i < do_todo_count - 1; i++) {
-        do_todos[i] = do_todos[i + 1];
-    }
-    do_todo_count--;
+        int index = do_find_todo_index_by_id(id, do_current_user);
+        if (index < 0) {
+            printf(DO_COLOR_RED "Todo with ID %d not found for user %s.\n" DO_COLOR_RESET, id, do_current_user);
+            return;
+        }
 
-    if (do_save_data() == 0) {
-        printf(DO_COLOR_GREEN "Todo deleted.\n" DO_COLOR_RESET);
+        printf(DO_COLOR_RED "Are you sure you want to delete todo with ID %d? (y/N): " DO_COLOR_RESET, id);
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+            printf(DO_COLOR_RED "Error reading input.\n" DO_COLOR_RESET);
+            return;
+        }
+        if (!(buffer[0] == 'y' || buffer[0] == 'Y')) {
+            printf(DO_COLOR_YELLOW "Delete cancelled.\n" DO_COLOR_RESET);
+            return;
+        }
+
+        for (int i = index; i < do_todo_count - 1; i++) {
+            do_todos[i] = do_todos[i + 1];
+        }
+        do_todo_count--;
+
+        if (do_save_data() == 0) {
+            printf(DO_COLOR_GREEN "Todo deleted.\n" DO_COLOR_RESET);
+        } else {
+            printf(DO_COLOR_RED "Todo deleted but failed to save.\n" DO_COLOR_RESET);
+        }
     } else {
-        printf(DO_COLOR_RED "Todo deleted but failed to save.\n" DO_COLOR_RESET);
+        int removed = 0;
+        for (int i = 0; i < do_todo_count; i++) {
+            do_todo *t = &do_todos[i];
+            if (strcmp(t->owner_name, do_current_user) == 0 &&
+                do_string_contains_case_insensitive(t->title, buffer)) {
+                printf(DO_COLOR_RED "Delete todo ID %d: \"%s\"? (y/N): " DO_COLOR_RESET, t->id, t->title);
+                if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+                    printf(DO_COLOR_RED "Error reading input.\n" DO_COLOR_RESET);
+                    break;
+                }
+                if (buffer[0] == 'y' || buffer[0] == 'Y') {
+                    for (int j = i; j < do_todo_count - 1; j++) {
+                        do_todos[j] = do_todos[j + 1];
+                    }
+                    do_todo_count--;
+                    removed++;
+                    i--;
+                }
+            }
+        }
+
+        if (removed == 0) {
+            printf(DO_COLOR_YELLOW "No todos matching \"%s\" found for user %s.\n" DO_COLOR_RESET,
+                   buffer, do_current_user);
+            return;
+        }
+
+        if (do_save_data() == 0) {
+            printf(DO_COLOR_GREEN "Deleted %d todos matching \"%s\".\n" DO_COLOR_RESET, removed, buffer);
+        } else {
+            printf(DO_COLOR_RED "Todos deleted but failed to save.\n" DO_COLOR_RESET);
+        }
     }
 }
 

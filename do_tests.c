@@ -17,6 +17,7 @@ void do_reset_state(void);
 void do_add_todo_for_test(const char *owner_name, const char *title, int completed);
 int do_todo_exists_for_user(const char *owner_name, const char *title, int completed);
 int do_get_todo_count_for_user(const char *owner_name);
+int do_string_contains_case_insensitive(const char *haystack, const char *needle);
 
 /* test helper */
 static void do_test_result(const char *name, int passed) {
@@ -31,6 +32,14 @@ static void do_test_trim_newline(void) {
     char s2[] = "no-newline";
     do_trim_newline(s2);
     do_test_result("do_trim_newline keeps string without newline", strcmp(s2, "no-newline") == 0);
+}
+
+static void do_test_string_contains_case_insensitive(void) {
+    int r1 = do_string_contains_case_insensitive("Hello World", "hello");
+    int r2 = do_string_contains_case_insensitive("Hello World", "WORLD");
+    int r3 = do_string_contains_case_insensitive("Hello World", "test");
+
+    do_test_result("do_string_contains_case_insensitive basic matches", r1 && r2 && !r3);
 }
 
 static void do_test_load_and_save_empty(void) {
@@ -70,6 +79,7 @@ static void do_test_persistence_roundtrip(void) {
 
 int do_run_tests(void) {
     do_test_trim_newline();
+    do_test_string_contains_case_insensitive();
     do_test_load_and_save_empty();
     do_test_persistence_roundtrip();
     return 0;
