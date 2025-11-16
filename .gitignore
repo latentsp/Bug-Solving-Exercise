@@ -1,0 +1,15 @@
+# Compiled binaries
+do_main
+do_tests
+
+# SQLite databases and data files
+*.db
+do_data.txt
+
+# OS/editor cruft
+.DS_Store
+*.swp
+*.swo
+*.log
+
+
