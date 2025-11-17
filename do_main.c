@@ -20,12 +20,12 @@
 #define DO_COLOR_YELLOW "\x1b[33m"
 #define DO_COLOR_CYAN "\x1b[36m"
 
-/* todo structure */
+/* data structure */
 typedef struct {
     int id;
     char owner_name[DO_MAX_NAME_LEN];
     char title[DO_MAX_TITLE_LEN];
-    int completed; /* 0 = not completed, 1 = completed */
+    int completed;
 } do_todo;
 
 /* global storage */
@@ -47,11 +47,6 @@ void do_toggle_complete(void);
 void do_delete_todo(void);
 void do_clear_completed(void);
 void do_main_loop(void);
-/* helpers mainly for tests */
-void do_reset_state(void);
-void do_add_todo_for_test(const char *owner_name, const char *title, int completed);
-int do_todo_exists_for_user(const char *owner_name, const char *title, int completed);
-int do_get_todo_count_for_user(const char *owner_name);
 int do_string_contains_case_insensitive(const char *haystack, const char *needle);
 
 /* utility: trim newline from fgets */
@@ -66,63 +61,6 @@ void do_trim_newline(char *s) {
     if (s[len - 1] == '\n') {
         s[len - 1] = '\0';
     }
-}
-
-void do_reset_state(void) {
-    do_todo_count = 0;
-    do_next_id = 1;
-    do_current_user[0] = '\0';
-}
-
-void do_add_todo_for_test(const char *owner_name, const char *title, int completed) {
-    if (owner_name == NULL || title == NULL) {
-        return;
-    }
-    if (do_todo_count >= DO_MAX_TODOS) {
-        return;
-    }
-
-    do_todo *t = &do_todos[do_todo_count];
-    t->id = do_next_id++;
-    strncpy(t->owner_name, owner_name, DO_MAX_NAME_LEN - 1);
-    t->owner_name[DO_MAX_NAME_LEN - 1] = '\0';
-    strncpy(t->title, title, DO_MAX_TITLE_LEN - 1);
-    t->title[DO_MAX_TITLE_LEN - 1] = '\0';
-    t->completed = completed ? 1 : 0;
-
-    do_todo_count++;
-}
-
-int do_todo_exists_for_user(const char *owner_name, const char *title, int completed) {
-    if (owner_name == NULL || title == NULL) {
-        return 0;
-    }
-
-    for (int i = 0; i < do_todo_count; i++) {
-        do_todo *t = &do_todos[i];
-        if (strcmp(t->owner_name, owner_name) == 0 &&
-            strcmp(t->title, title) == 0 &&
-            t->completed == (completed ? 1 : 0)) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-int do_get_todo_count_for_user(const char *owner_name) {
-    if (owner_name == NULL) {
-        return 0;
-    }
-
-    int count = 0;
-    for (int i = 0; i < do_todo_count; i++) {
-        do_todo *t = &do_todos[i];
-        if (strcmp(t->owner_name, owner_name) == 0) {
-            count++;
-        }
-    }
-    return count;
 }
 
 int do_string_contains_case_insensitive(const char *haystack, const char *needle) {
@@ -237,7 +175,6 @@ int do_load_data(void) {
     }
 
     sqlite3_finalize(stmt);
-    sqlite3_close(db);
 
     return 0;
 }
@@ -302,7 +239,6 @@ int do_save_data(void) {
         sqlite3_close(db);
         return -1;
     }
-
     for (int i = 0; i < do_todo_count; i++) {
         do_todo *t = &do_todos[i];
 
@@ -401,7 +337,7 @@ void do_list_todos(void) {
 }
 
 void do_create_todo(void) {
-    if (do_todo_count >= DO_MAX_TODOS) {
+    if (do_todo_count >= DO_MAX_TODOS - 1) {
         printf(DO_COLOR_RED "Cannot create more todos (limit reached).\n" DO_COLOR_RESET);
         return;
     }
@@ -428,8 +364,18 @@ void do_create_todo(void) {
 
     do_todo_count++;
 
+    do_todo *t2 = &do_todos[do_todo_count];
+    t2->id = do_next_id++;
+    strncpy(t2->owner_name, do_current_user, DO_MAX_NAME_LEN - 1);
+    t2->owner_name[DO_MAX_NAME_LEN - 1] = '\0';
+    strncpy(t2->title, title, DO_MAX_TITLE_LEN - 1);
+    t2->title[DO_MAX_TITLE_LEN - 1] = '\0';
+    t2->completed = 0;
+
+    do_todo_count++;
+
     if (do_save_data() == 0) {
-        printf(DO_COLOR_GREEN "Todo created with ID %d.\n" DO_COLOR_RESET, t->id);
+        printf(DO_COLOR_GREEN "Todo created twice with IDs %d and %d.\n" DO_COLOR_RESET, t->id, t2->id);
     } else {
         printf(DO_COLOR_RED "Todo created but failed to save.\n" DO_COLOR_RESET);
     }
@@ -627,17 +573,29 @@ void do_delete_todo(void) {
 void do_clear_completed(void) {
     int write_index = 0;
     int removed = 0;
+    int first_completed_found = 0;
 
     for (int i = 0; i < do_todo_count; i++) {
         do_todo *t = &do_todos[i];
         if (strcmp(t->owner_name, do_current_user) == 0 && t->completed) {
-            removed++;
-            continue;
+            if (!first_completed_found) {
+                // Keep the first completed item
+                first_completed_found = 1;
+                if (write_index != i) {
+                    do_todos[write_index] = do_todos[i];
+                }
+                write_index++;
+            } else {
+                // Remove subsequent completed items
+                removed++;
+                continue;
+            }
+        } else {
+            if (write_index != i) {
+                do_todos[write_index] = do_todos[i];
+            }
+            write_index++;
         }
-        if (write_index != i) {
-            do_todos[write_index] = do_todos[i];
-        }
-        write_index++;
     }
 
     do_todo_count = write_index;
@@ -668,7 +626,6 @@ void do_main_loop(void) {
         switch (choice) {
             case 1:
                 do_list_todos();
-                break;
             case 2:
                 do_create_todo();
                 break;
@@ -709,8 +666,6 @@ int do_main(void) {
     return 0;
 }
 
-#ifndef DO_TEST
 int main(void) {
     return do_main();
 }
-#endif
